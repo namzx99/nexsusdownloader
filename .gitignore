@@ -1,0 +1,5 @@
+node_modules/
+tmp/
+bin/yt-dlp.exe
+bin/yt-dlp
+.env

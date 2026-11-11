@@ -1,0 +1,99 @@
+.nav {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  z-index: 1000;
+  transition: background 0.3s, box-shadow 0.3s;
+}
+
+.scrolled {
+  background: rgba(2, 11, 24, 0.88);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  box-shadow: 0 1px 0 rgba(0,212,255,0.12), 0 4px 24px rgba(0,0,0,0.5);
+}
+
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 24px;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 800;
+  font-size: 1.15rem;
+  color: var(--text);
+  letter-spacing: -0.02em;
+}
+
+.logoIcon {
+  width: 36px; height: 36px;
+  background: linear-gradient(135deg, #0066ff, #00d4ff);
+  border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  color: white;
+  box-shadow: 0 0 16px rgba(0,212,255,0.35);
+}
+
+.logoText span {
+  background: linear-gradient(90deg, #00d4ff, #0af5e0);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.links { display: flex; list-style: none; gap: 4px; }
+
+.link {
+  display: block;
+  padding: 8px 14px;
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  font-weight: 500;
+  border-radius: 8px;
+  transition: color 0.2s, background 0.2s;
+}
+.link:hover { color: var(--primary); background: rgba(0,212,255,0.08); }
+
+.menuBtn {
+  display: none; flex-direction: column; gap: 5px;
+  background: none; border: none; padding: 8px;
+  border-radius: 8px; transition: background 0.2s;
+}
+.menuBtn:hover { background: rgba(0,212,255,0.08); }
+
+.bar {
+  display: block; width: 22px; height: 2px;
+  background: var(--text-muted); border-radius: 2px;
+  transition: transform 0.3s, opacity 0.3s;
+  transform-origin: center;
+}
+.bar1Open { transform: translateY(7px) rotate(45deg); }
+.bar2Open { opacity: 0; }
+.bar3Open { transform: translateY(-7px) rotate(-45deg); }
+
+.mobileMenu {
+  overflow: hidden;
+  background: rgba(2,11,24,0.96);
+  backdrop-filter: blur(20px);
+  border-top: 1px solid rgba(0,212,255,0.1);
+  padding: 12px 24px 20px;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.mobileLink {
+  display: block; padding: 12px 16px;
+  color: var(--text-muted); font-size: 1rem; font-weight: 500;
+  border-radius: 10px; transition: color 0.2s, background 0.2s;
+}
+.mobileLink:hover { color: var(--primary); background: rgba(0,212,255,0.08); }
+
+@media (max-width: 768px) {
+  .links { display: none; }
+  .menuBtn { display: flex; }
+}
