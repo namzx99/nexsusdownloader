@@ -3,31 +3,29 @@ import { motion, AnimatePresence } from 'framer-motion'
 import toast from 'react-hot-toast'
 import styles from './Downloader.module.css'
 
-// Pakai proxy Vite — /api otomatis diteruskan ke http://localhost:3001
-const API = ''
-
+// ─── Platform detection ───────────────────────────────────────────────────────
 function detectPlatform(url) {
   if (!url) return null
-  if (/tiktok\.com/i.test(url))             return 'tiktok'
-  if (/instagram\.com/i.test(url))          return 'instagram'
-  if (/youtube\.com|youtu\.be/i.test(url))  return 'youtube'
+  if (/tiktok\.com/i.test(url))            return 'tiktok'
+  if (/instagram\.com/i.test(url))         return 'instagram'
+  if (/youtube\.com|youtu\.be/i.test(url)) return 'youtube'
   return null
 }
 
 const PLATFORM_LABELS = { tiktok: 'TikTok', instagram: 'Instagram', youtube: 'YouTube' }
 const PLATFORM_COLORS = { tiktok: '#00d4ff', instagram: '#e1306c', youtube: '#ff5555' }
 
-// ── TikTok via tikwm.com (no backend needed) ─────────────────────────────────
-async function fetchTikTok(url, format) {
-  const res  = await fetch(`https://www.tikwm.com/api/?url=${encodeURIComponent(url)}&hd=1`)
+// ─── TikTok — tikwm.com API (direct, no backend) ─────────────────────────────
+async function fetchTikTok(rawUrl, format) {
+  const res  = await fetch(`https://www.tikwm.com/api/?url=${encodeURIComponent(rawUrl)}&hd=1`)
   const data = await res.json()
-  if (data.code !== 0) throw new Error(data.msg || 'Gagal ambil data TikTok')
+
+  if (data.code !== 0) throw new Error(data.msg || 'Gagal ambil data TikTok. Pastikan link publik.')
 
   const d       = data.data
-  const isSlide = d.images && d.images.length > 0
+  const isSlide = Array.isArray(d.images) && d.images.length > 0
 
   if (isSlide) {
-    // FotoLive / slideshow
     const downloads = d.images.map((imgUrl, i) => ({
       label:    `📸 Foto ${i + 1}`,
       url:      imgUrl,
@@ -41,10 +39,10 @@ async function fetchTikTok(url, format) {
       isDirect: true,
     })
     return {
-      title:    d.title    || 'TikTok Slideshow',
-      uploader: d.author?.nickname || '',
+      title:     d.title || 'TikTok Slideshow',
+      uploader:  d.author?.nickname || '',
       thumbnail: d.origin_cover || d.cover || '',
-      type:     'fotolive',
+      type:      'fotolive',
       downloads,
     }
   }
@@ -80,29 +78,130 @@ async function fetchTikTok(url, format) {
   }
 
   return {
-    title:     d.title    || 'TikTok Video',
+    title:     d.title || 'TikTok Video',
     uploader:  d.author?.nickname || '',
     thumbnail: d.origin_cover || d.cover || '',
-    duration:  d.duration  || null,
+    duration:  d.duration || null,
     type:      format === 'audio' ? 'audio' : 'video',
     downloads,
   }
 }
 
-// ── Instagram / YouTube via backend yt-dlp ───────────────────────────────────
-async function fetchBackend(url, format, quality) {
-  const res  = await fetch(`${API}/api/info`, {
-    method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({ url, format, quality }),
-  })
-  const data = await res.json()
-  if (!res.ok) throw new Error(data.error || 'Gagal ambil info dari server')
-  return data
+// ─── Instagram & YouTube — cobalt.tools API (serverless-friendly) ─────────────
+// cobalt.tools adalah open-source downloader API, gratis, tanpa key
+// Docs: https://cobalt.tools / https://github.com/imputnet/cobalt
+async function fetchCobalt(rawUrl, format, quality) {
+  // Coba instance publik cobalt secara berurutan sampai ada yang berhasil
+  const COBALT_INSTANCES = [
+    'https://api.cobalt.tools',
+    'https://cobalt.api.timelessnesses.me',
+    'https://cobalt.tools/api',
+  ]
+
+  const videoQualityMap = {
+    best: '1080',
+    '1080': '1080',
+    '720': '720',
+    '480': '480',
+    '360': '360',
+  }
+
+  const body = {
+    url:           rawUrl,
+    videoQuality:  videoQualityMap[quality] || '1080',
+    audioFormat:   'mp3',
+    filenameStyle: 'pretty',
+    ...(format === 'audio' ? { downloadMode: 'audio' } : { downloadMode: 'auto' }),
+  }
+
+  let lastError = null
+
+  for (const instance of COBALT_INSTANCES) {
+    try {
+      const res = await fetch(instance, {
+        method:  'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept':       'application/json',
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(15000),
+      })
+
+      if (!res.ok) {
+        lastError = new Error(`Server error ${res.status}`)
+        continue
+      }
+
+      const data = await res.json()
+
+      // cobalt v10+ response format
+      if (data.status === 'error') {
+        lastError = new Error(data.error?.code || 'Cobalt error')
+        continue
+      }
+
+      // status: 'stream' or 'redirect' or 'tunnel' — all have .url
+      if (data.status === 'picker') {
+        // Multiple items (e.g. Instagram carousel)
+        const downloads = (data.picker || []).map((item, i) => ({
+          label:    item.type === 'photo' ? `📸 Foto ${i + 1}` : `🎬 Video ${i + 1}`,
+          url:      item.url,
+          filename: `media_${i + 1}.${item.type === 'photo' ? 'jpg' : 'mp4'}`,
+          isDirect: true,
+        }))
+        if (data.audio) downloads.push({
+          label:    '🎵 Audio',
+          url:      data.audio,
+          filename: 'audio.mp3',
+          isDirect: true,
+        })
+        return {
+          title:     '',
+          uploader:  '',
+          thumbnail: '',
+          type:      'fotolive',
+          downloads,
+        }
+      }
+
+      if (data.url) {
+        const ext      = format === 'audio' ? 'mp3' : 'mp4'
+        const label    = format === 'audio' ? '🎵 Download MP3' : `🎬 Download Video`
+        const filename = `${detectPlatform(rawUrl)}_${Date.now()}.${ext}`
+
+        return {
+          title:     data.filename?.replace(/\.[^.]+$/, '') || 'Video',
+          uploader:  '',
+          thumbnail: '',
+          type:      format === 'audio' ? 'audio' : 'video',
+          downloads: [{
+            label,
+            url:      data.url,
+            filename: data.filename || filename,
+            isDirect: true,
+          }],
+        }
+      }
+
+      lastError = new Error('Response tidak valid dari cobalt')
+    } catch (err) {
+      lastError = err
+    }
+  }
+
+  throw new Error(lastError?.message || 'Semua server cobalt tidak tersedia. Coba lagi.')
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ─── Main fetch dispatcher ────────────────────────────────────────────────────
+async function fetchMedia(rawUrl, platform, format, quality) {
+  if (platform === 'tiktok')   return fetchTikTok(rawUrl, format)
+  if (platform === 'instagram') return fetchCobalt(rawUrl, format, quality)
+  if (platform === 'youtube')   return fetchCobalt(rawUrl, format, quality)
+  throw new Error('Platform tidak dikenali')
+}
 
+// ─── Component ────────────────────────────────────────────────────────────────
 export default function Downloader() {
   const [url, setUrl]         = useState('')
   const [format, setFormat]   = useState('video')
@@ -130,34 +229,25 @@ export default function Downloader() {
     inputRef.current?.focus()
   }
 
-  // ── Submit ────────────────────────────────────────────────────────────────
+  // ── Submit ──────────────────────────────────────────────────────────────────
   const handleSubmit = async (e) => {
     e.preventDefault()
     const trimmed = url.trim()
-    if (!trimmed) { toast.error('Masukkan URL terlebih dahulu'); return }
+    if (!trimmed)  { toast.error('Masukkan URL terlebih dahulu'); return }
     if (!platform) { toast.error('Gunakan link TikTok, Instagram, atau YouTube'); return }
 
     setLoading(true)
     setResult(null)
 
     try {
-      let info
-
-      if (platform === 'tiktok') {
-        // TikTok: langsung via tikwm.com, tidak perlu backend
-        info = await fetchTikTok(trimmed, format)
-      } else {
-        // Instagram / YouTube: via backend yt-dlp
-        info = await fetchBackend(trimmed, format, quality)
-      }
-
+      const info = await fetchMedia(trimmed, platform, format, quality)
       setResult(info)
 
-      // Auto-download jika cuma 1 opsi dan bukan slideshow
+      // Auto-download jika cuma 1 opsi dan bukan slideshow/fotolive
       if (info.type !== 'fotolive' && info.downloads?.length === 1) {
         await triggerDownload(info.downloads[0], 0)
       } else {
-        toast.success('Info berhasil didapat, pilih tombol download di bawah!')
+        toast.success('Pilih tombol download di bawah!')
       }
     } catch (err) {
       toast.error(err.message || 'Terjadi kesalahan')
@@ -166,44 +256,21 @@ export default function Downloader() {
     }
   }
 
-  // ── Trigger download ──────────────────────────────────────────────────────
+  // ── Download a single item ──────────────────────────────────────────────────
   const triggerDownload = async (dl, idx) => {
     setDlBusy(p => ({ ...p, [idx]: true }))
     const tid = toast.loading(`Mengunduh ${dl.label}...`)
 
     try {
-      let blobUrl
+      // Semua URL sekarang direct — fetch → blob → save
+      const r = await fetch(dl.url, { signal: AbortSignal.timeout(120000) })
+      if (!r.ok) throw new Error(`HTTP ${r.status} — gagal mengambil file`)
+      const blob   = await r.blob()
+      const blobUrl = URL.createObjectURL(blob)
 
-      if (dl.isDirect) {
-        // Langsung ambil dari CDN → blob → simpan
-        const r    = await fetch(dl.url)
-        if (!r.ok) throw new Error(`HTTP ${r.status}`)
-        const blob = await r.blob()
-        blobUrl    = URL.createObjectURL(blob)
-      } else {
-        // Stream dari backend yt-dlp
-        const r = await fetch(`${API}/api/download`, {
-          method:  'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({
-            url:      dl.url,
-            filename: dl.filename,
-            format:   dl.format  || format,
-            quality:  dl.quality || quality,
-          }),
-        })
-        if (!r.ok) {
-          const e = await r.json().catch(() => ({}))
-          throw new Error(e.error || 'Gagal download dari server')
-        }
-        const blob = await r.blob()
-        blobUrl    = URL.createObjectURL(blob)
-      }
-
-      // Trigger save dialog
-      const a    = document.createElement('a')
-      a.href     = blobUrl
-      a.download = dl.filename
+      const a       = document.createElement('a')
+      a.href        = blobUrl
+      a.download    = dl.filename
       document.body.appendChild(a)
       a.click()
       a.remove()
@@ -211,13 +278,19 @@ export default function Downloader() {
 
       toast.success('Download selesai!', { id: tid })
     } catch (err) {
-      toast.error(err.message || 'Gagal download', { id: tid })
+      // CORS fallback: buka URL langsung di tab baru
+      if (err.message.includes('CORS') || err.message.includes('Failed to fetch') || err.name === 'TypeError') {
+        window.open(dl.url, '_blank')
+        toast.success('File dibuka di tab baru — simpan dengan klik kanan → Simpan', { id: tid, duration: 6000 })
+      } else {
+        toast.error(err.message || 'Gagal download', { id: tid })
+      }
     } finally {
       setDlBusy(p => ({ ...p, [idx]: false }))
     }
   }
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  // ── Render ──────────────────────────────────────────────────────────────────
   return (
     <section id="downloader" className={styles.section}>
       <div className={styles.glowLine} />
@@ -258,7 +331,7 @@ export default function Downloader() {
             ))}
           </div>
 
-          {/* Quality row — video only, TikTok kualitas diabaikan karena tikwm sudah HD */}
+          {/* Quality row — video only, TikTok sudah HD dari tikwm */}
           <AnimatePresence>
             {format === 'video' && platform !== 'tiktok' && (
               <motion.div
@@ -361,11 +434,11 @@ export default function Downloader() {
                     />
                   )}
                   <div className={styles.resultMeta}>
-                    <p className={styles.resultTitle}>{result.title}</p>
+                    <p className={styles.resultTitle}>{result.title || 'Media siap didownload'}</p>
                     {result.uploader && <p className={styles.resultSub}>👤 {result.uploader}</p>}
                     {result.duration  && <p className={styles.resultSub}>⏱ {fmtDuration(result.duration)}</p>}
                     {result.type === 'fotolive' && (
-                      <span className={styles.fotoliveTag}>📸 TikTok FotoLive / Slideshow</span>
+                      <span className={styles.fotoliveTag}>📸 Slideshow / Carousel</span>
                     )}
                   </div>
                 </div>
